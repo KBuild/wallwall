@@ -1,0 +1,17 @@
+# User-owned Wallpaper Engine files and reconstructed Unity project.
+WallpaperEV/
+Port/
+Builds/
+
+# Downloaded tooling and temporary generation state.
+.tools/
+*.new/
+*.previous/
+
+.DS_Store
+__pycache__/
+*.pyc
+
+# Unnecessary temporal document files
+WORKLOG.md
+*PLAN.md
