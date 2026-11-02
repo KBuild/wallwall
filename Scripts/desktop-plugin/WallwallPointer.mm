@@ -108,10 +108,28 @@
     for (NSDictionary *entry in (__bridge NSArray *)list) {
         NSInteger layer = [entry[(__bridge NSString *)kCGWindowLayer] integerValue];
         if (layer < 0) continue;
+        // The cursor is a Window Server window above all apps, not an input
+        // blocker. Dock also publishes a transparent full-display host on Tahoe.
+        if (layer == CGWindowLevelForKey(kCGCursorWindowLevelKey)) continue;
         CGFloat alpha = [entry[(__bridge NSString *)kCGWindowAlpha] doubleValue];
         if (alpha <= 0.01) continue;
         CFDictionaryRef bounds = (__bridge CFDictionaryRef)entry[(__bridge NSString *)kCGWindowBounds];
         CGRect rect = CGRectZero;
+        if (bounds && CGRectMakeWithDictionaryRepresentation(bounds, &rect) &&
+            layer == CGWindowLevelForKey(kCGDockWindowLevelKey)) {
+            pid_t pid = [entry[(__bridge NSString *)kCGWindowOwnerPID] intValue];
+            NSString *bundle = [NSRunningApplication runningApplicationWithProcessIdentifier:pid].bundleIdentifier;
+            if ([bundle isEqualToString:@"com.apple.dock"]) {
+                for (NSScreen *screen in NSScreen.screens) {
+                    CGDirectDisplayID display = [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
+                    if (CGRectEqualToRect(rect, CGDisplayBounds(display))) {
+                        rect = CGRectZero;
+                        break;
+                    }
+                }
+                if (CGRectIsEmpty(rect)) continue;
+            }
+        }
         if (bounds && CGRectMakeWithDictionaryRepresentation(bounds, &rect) &&
             CGRectContainsPoint(rect, cgPoint)) { available = NO; break; }
     }

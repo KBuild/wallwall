@@ -140,6 +140,8 @@ public partial class SpineClickSequencePlayer : IWallwallAmbientPlayer
     // mouse event. Drag mode is handled by the recovered pointer controller.
     private void UpdateWallwallHover()
     {
+        if (pointerActive || isPlayingSet || ambientOverlayArea != null || wallwallHoverActive)
+            WallwallDesktop.RequestRealtimeFrames();
         bool wallpaperMode = WallwallDesktop.IsWallpaperMode;
         bool hoverMode = wallpaperMode && WallwallDesktop.PointerMode == 0;
         if (hoverMode != wallwallWasHoverMode)

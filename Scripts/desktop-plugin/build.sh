@@ -18,7 +18,7 @@ cat > "$output_bundle/Contents/Info.plist" <<'EOF'
 <key>CFBundleVersion</key><string>1</string>
 </dict></plist>
 EOF
-xcrun clang++ -std=c++23 -fobjc-arc -fvisibility=hidden \
+xcrun clang++ -O2 -std=c++23 -fobjc-arc -fvisibility=hidden \
     -mmacosx-version-min=12.0 -arch arm64 -arch x86_64 \
     -bundle -framework AppKit -framework CoreGraphics -framework AVFoundation \
     "$script_dir/WallwallDesktop.mm" "$script_dir/WallwallSettings.mm" \

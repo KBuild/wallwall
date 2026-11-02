@@ -435,7 +435,7 @@ extern "C" __attribute__((visibility("default"))) int WWDesktopFrameRate(void)
     __block int rate = 30;
     void (^readRate)(void) = ^{
         if (sSleeping || !sWindow || !sWindow.isVisible ||
-            !(sWindow.occlusionState & NSWindowOcclusionStateVisible)) rate = 5;
+            !(sWindow.occlusionState & NSWindowOcclusionStateVisible)) rate = 2;
         else if (NSProcessInfo.processInfo.lowPowerModeEnabled) rate = 15;
     };
     if (NSThread.isMainThread) readRate();

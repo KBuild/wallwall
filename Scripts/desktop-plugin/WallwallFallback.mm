@@ -7,12 +7,24 @@
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) AVQueuePlayer *player;
 @property(nonatomic, strong) AVPlayerLooper *looper;
+@property(nonatomic) BOOL sleeping;
+- (void)updatePlayback;
 - (void)stop;
 @end
 
 @implementation WWFallbackWindow
+- (void)updatePlayback
+{
+    BOOL visible = !_sleeping && _window.isVisible &&
+        (_window.occlusionState & NSWindowOcclusionStateVisible);
+    if (visible) { if (_player.rate == 0) [_player play]; }
+    else if (_player.rate != 0) [_player pause];
+}
+- (void)occlusionChanged:(NSNotification *)notification { [self updatePlayback]; }
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (void)stop
 {
+    [NSNotificationCenter.defaultCenter removeObserver:self];
     [_player pause];
     [_looper disableLooping];
     [_window orderOut:nil];
@@ -81,12 +93,13 @@
     layer.videoGravity = AVLayerVideoGravityResizeAspectFill;
     [window.contentView.layer addSublayer:layer];
     [window orderFront:nil];
-    [player play];
 
     WWFallbackWindow *result = [WWFallbackWindow new];
     result.window = window;
     result.player = player;
     result.looper = looper;
+    [NSNotificationCenter.defaultCenter addObserver:result selector:@selector(occlusionChanged:)
+        name:NSWindowDidChangeOcclusionStateNotification object:window];
     return result;
 }
 
@@ -115,8 +128,8 @@
                 [fallback.window setFrame:screen.frame display:YES];
             if (!fallback.window.isVisible) [fallback.window orderFront:nil];
         }
-        if (sleeping) { if (fallback.player.rate != 0) [fallback.player pause]; }
-        else if (fallback.player.rate == 0) [fallback.player play];
+        fallback.sleeping = sleeping;
+        [fallback updatePlayback];
     }
     for (NSNumber *display in _windows.allKeys) {
         if ([wanted containsObject:display]) continue;

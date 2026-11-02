@@ -1,10 +1,16 @@
 using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 // Automatically starts in a macOS player; no scene object is required.
 internal sealed class WallwallDesktop : MonoBehaviour
 {
+    private static float realtimeFramesUntil;
+    internal static void RequestRealtimeFrames()
+    {
+        realtimeFramesUntil = Time.unscaledTime + 1f;
+    }
     internal static bool IsWallpaperMode
     {
         get
@@ -22,8 +28,15 @@ internal sealed class WallwallDesktop : MonoBehaviour
         get
         {
 #if UNITY_STANDALONE_OSX && !UNITY_EDITOR
-            if (hostReady && WWDesktopCursor(out float x, out float y) == 1)
-                return new Vector3(x * Screen.width, y * Screen.height, 0);
+            if (hostReady)
+            {
+                if (cursorSampleFrame != Time.frameCount)
+                {
+                    cursorSampleFrame = Time.frameCount;
+                    cursorSampleValid = WWDesktopCursor(out cursorX, out cursorY) == 1;
+                }
+                if (cursorSampleValid) return new Vector3(cursorX * Screen.width, cursorY * Screen.height, 0);
+            }
 #endif
             return Input.mousePosition;
         }
@@ -152,6 +165,7 @@ internal sealed class WallwallDesktop : MonoBehaviour
         down = dragSampleDown;
         held = dragSampleHeld;
         up = dragSampleUp;
+        if (down || held || up) RequestRealtimeFrames();
         return true;
 #else
         return false;
@@ -159,6 +173,9 @@ internal sealed class WallwallDesktop : MonoBehaviour
     }
 #if UNITY_STANDALONE_OSX && !UNITY_EDITOR
     private static bool hostReady;
+    private static int cursorSampleFrame = -1;
+    private static bool cursorSampleValid;
+    private static float cursorX, cursorY;
     [DllImport("WallwallDesktop")]
     private static extern int WWDesktopCursor(out float x, out float y);
     [DllImport("WallwallDesktop")]
@@ -195,6 +212,15 @@ internal sealed class WallwallDesktop : MonoBehaviour
     private float nextAttempt;
     private bool pluginMissing;
     private bool originalRunInBackground;
+    private int originalFrameRate, originalVSync, originalRenderInterval;
+    private int frameBudget = 30;
+    private int originalSleepTimeout;
+    private int idleFrameRate = 20;
+    private bool profile;
+    private double profileStarted;
+    private double profilePrevious;
+    private int profileUpdates, profileRenders;
+    private float profileMaxStep;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void StartDesktopHost()
@@ -211,17 +237,44 @@ internal sealed class WallwallDesktop : MonoBehaviour
     private void Awake()
     {
         originalRunInBackground = Application.runInBackground;
+        originalSleepTimeout = Screen.sleepTimeout;
+        Screen.sleepTimeout = SleepTimeout.SystemSetting;
+        // Explicit diagnostic launch options; normal launches keep the policy.
+        foreach (string argument in Environment.GetCommandLineArgs())
+        {
+            if (argument == "--wallwall-profile") profile = true;
+            const string prefix = "--wallwall-idle-fps=";
+            if (argument.StartsWith(prefix, StringComparison.Ordinal) &&
+                int.TryParse(argument.Substring(prefix.Length), out int requested) &&
+                (requested == 20 || requested == 24 || requested == 30)) idleFrameRate = requested;
+        }
+        profileStarted = Time.realtimeSinceStartupAsDouble;
+        profilePrevious = profileStarted;
+        originalFrameRate = Application.targetFrameRate;
+        originalVSync = QualitySettings.vSyncCount;
+        originalRenderInterval = OnDemandRendering.renderFrameInterval;
         Application.runInBackground = true;
     }
 
     private void Update()
     {
+        if (hostReady && !pluginMissing)
+        {
+            int rate = frameBudget;
+            if (rate == 30 && IsWallpaperMode && Time.unscaledTime >= realtimeFramesUntil) rate = idleFrameRate;
+            if (Application.targetFrameRate != rate) Application.targetFrameRate = rate;
+            // Hidden: keep a slow lifecycle/input tick, submit only one frame
+            // per second. Visible animated content must render every tick.
+            int interval = frameBudget <= 2 ? 2 : 1;
+            if (OnDemandRendering.renderFrameInterval != interval) OnDemandRendering.renderFrameInterval = interval;
+        }
+        if (profile) RecordFrameBudget();
         if (pluginMissing || Time.unscaledTime < nextAttempt)
         {
             return;
         }
 
-        nextAttempt = Time.unscaledTime + 2f;
+        nextAttempt = Time.unscaledTime + (hostReady ? 0.5f : 2f);
         try
         {
             int result = WWDesktopConfigure();
@@ -230,7 +283,8 @@ internal sealed class WallwallDesktop : MonoBehaviour
             {
                 if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
                 int frameRate = WWDesktopFrameRate();
-                if (Application.targetFrameRate != frameRate) Application.targetFrameRate = frameRate;
+                if (frameBudget != frameRate) Debug.Log("[WALLWALL budget] update cap=" + frameRate);
+                frameBudget = frameRate;
             }
             if (result < 0)
             {
@@ -250,9 +304,35 @@ internal sealed class WallwallDesktop : MonoBehaviour
         }
     }
 
+    private void RecordFrameBudget()
+    {
+        profileUpdates++;
+        if (OnDemandRendering.willCurrentFrameRender) profileRenders++;
+        double now = Time.realtimeSinceStartupAsDouble;
+        profileMaxStep = Mathf.Max(profileMaxStep, (float)(now - profilePrevious));
+        profilePrevious = now;
+        double elapsed = now - profileStarted;
+        if (elapsed < 5) return;
+        // Counts scheduled render frames, not compositor presentations or GPU time.
+        Debug.Log("[WALLWALL profile] updateHz=" + (profileUpdates / elapsed).ToString("F1") +
+            " renderHz=" + (profileRenders / elapsed).ToString("F1") +
+            " maxUpdateMs=" + (profileMaxStep * 1000f).ToString("F1") +
+            " cap=" + Application.targetFrameRate + " interval=" + OnDemandRendering.renderFrameInterval +
+            " pixels=" + Screen.width + "x" + Screen.height +
+            " spineThreads=" + Spine.Unity.RuntimeSettings.UseThreadedAnimation + "/" +
+            Spine.Unity.RuntimeSettings.UseThreadedMeshGeneration);
+        profileStarted = now;
+        profileUpdates = profileRenders = 0;
+        profileMaxStep = 0;
+    }
+
     private void OnApplicationQuit()
     {
         Application.runInBackground = originalRunInBackground;
+        Screen.sleepTimeout = originalSleepTimeout;
+        Application.targetFrameRate = originalFrameRate;
+        QualitySettings.vSyncCount = originalVSync;
+        OnDemandRendering.renderFrameInterval = originalRenderInterval;
         if (!pluginMissing)
         {
             WWDesktopRestore();
