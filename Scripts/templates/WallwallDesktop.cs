@@ -105,8 +105,7 @@ internal sealed class WallwallDesktop : MonoBehaviour
 #if UNITY_STANDALONE_OSX && !UNITY_EDITOR
         if (!IsWallpaperMode || PointerMode != 1)
         {
-            dragNeedsBaseline = true;
-            dragPendingDown = dragPendingUp = false;
+            dragInput.Reset();
             dragSampleFrame = -1;
             // Wallpaper Hover owns input independently of Unity mouse buttons.
             return IsWallpaperMode;
@@ -118,53 +117,21 @@ internal sealed class WallwallDesktop : MonoBehaviour
                 out float pressX, out float pressY, out float releaseX, out float releaseY) != 1)
             {
                 dragSampleFrame = -1;
-                dragNeedsBaseline = true;
+                dragInput.Reset();
                 // Never fall back to focused-window buttons in wallpaper mode.
                 return true;
             }
 
-            dragSamplePosition = position;
-            dragSampleDown = dragSampleHeld = dragSampleUp = false;
-            if (dragNeedsBaseline)
-            {
-                dragSeenDown = downRevision;
-                dragSeenUp = upRevision;
-                dragNeedsBaseline = false;
-            }
-            else
-            {
-                if (downRevision != dragSeenDown)
-                {
-                    dragSeenDown = downRevision;
-                    dragPendingDown = true;
-                    dragPressPosition = new Vector2(pressX * Screen.width, pressY * Screen.height);
-                }
-                if (upRevision != dragSeenUp)
-                {
-                    dragSeenUp = upRevision;
-                    dragPendingUp = true;
-                    dragReleasePosition = new Vector2(releaseX * Screen.width, releaseY * Screen.height);
-                }
-            }
-            if (dragPendingDown)
-            {
-                dragPendingDown = false;
-                dragSamplePosition = dragPressPosition;
-                dragSampleDown = true;
-                dragSampleHeld = true;
-            }
-            else if (dragPendingUp)
-            {
-                dragPendingUp = false;
-                dragSamplePosition = dragReleasePosition;
-                dragSampleUp = true;
-            }
-            else dragSampleHeld = nativeHeld != 0;
+            dragInput.Sample(downRevision, upRevision, nativeHeld != 0,
+                pressX * Screen.width, pressY * Screen.height,
+                releaseX * Screen.width, releaseY * Screen.height);
+            dragSamplePosition = dragInput.Down || dragInput.Up
+                ? new Vector2(dragInput.X, dragInput.Y) : position;
         }
         position = dragSamplePosition;
-        down = dragSampleDown;
-        held = dragSampleHeld;
-        up = dragSampleUp;
+        down = dragInput.Down;
+        held = dragInput.Held;
+        up = dragInput.Up;
         if (down || held || up) RequestRealtimeFrames();
         return true;
 #else
@@ -203,11 +170,8 @@ internal sealed class WallwallDesktop : MonoBehaviour
     private static extern void WWDesktopRestore();
 
     private static int dragSampleFrame = -1;
-    private static bool dragNeedsBaseline = true;
-    private static uint dragSeenDown, dragSeenUp;
-    private static bool dragPendingDown, dragPendingUp;
-    private static Vector2 dragPressPosition, dragReleasePosition, dragSamplePosition;
-    private static bool dragSampleDown, dragSampleHeld, dragSampleUp;
+    private static readonly WallwallDragInput dragInput = new WallwallDragInput();
+    private static Vector2 dragSamplePosition;
 
     private float nextAttempt;
     private bool pluginMissing;
@@ -215,7 +179,7 @@ internal sealed class WallwallDesktop : MonoBehaviour
     private int originalFrameRate, originalVSync, originalRenderInterval;
     private int frameBudget = 30;
     private int originalSleepTimeout;
-    private int idleFrameRate = 20;
+    private int idleFrameRate = 24;
     private bool profile;
     private double profileStarted;
     private double profilePrevious;
@@ -260,12 +224,12 @@ internal sealed class WallwallDesktop : MonoBehaviour
     {
         if (hostReady && !pluginMissing)
         {
-            int rate = frameBudget;
-            if (rate == 30 && IsWallpaperMode && Time.unscaledTime >= realtimeFramesUntil) rate = idleFrameRate;
+            int rate = WallwallFramePolicy.UpdateRate(frameBudget, IsWallpaperMode,
+                Time.unscaledTime < realtimeFramesUntil, idleFrameRate);
             if (Application.targetFrameRate != rate) Application.targetFrameRate = rate;
             // Hidden: keep a slow lifecycle/input tick, submit only one frame
             // per second. Visible animated content must render every tick.
-            int interval = frameBudget <= 2 ? 2 : 1;
+            int interval = WallwallFramePolicy.RenderInterval(frameBudget);
             if (OnDemandRendering.renderFrameInterval != interval) OnDemandRendering.renderFrameInterval = interval;
         }
         if (profile) RecordFrameBudget();

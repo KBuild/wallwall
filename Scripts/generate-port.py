@@ -391,6 +391,8 @@ def patch_project(project: Path, uncompressed_atlas: bool) -> list[str]:
 
     desktop_script = ROOT / "Scripts/templates/WallwallDesktop.cs"
     shutil.copy2(desktop_script, project / "Assets/Scripts/Assembly-CSharp/WallwallDesktop.cs")
+    shutil.copy2(ROOT / "Scripts/templates/WallwallDesktopPolicy.cs",
+                 project / "Assets/Scripts/Assembly-CSharp/WallwallDesktopPolicy.cs")
     shutil.copy2(ROOT / "Scripts/templates/WallwallVideoExport.cs",
                  project / "Assets/Scripts/Assembly-CSharp/WallwallVideoExport.cs")
     changes.append("Added macOS desktop host C# startup")

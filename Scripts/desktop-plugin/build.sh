@@ -18,10 +18,25 @@ cat > "$output_bundle/Contents/Info.plist" <<'EOF'
 <key>CFBundleVersion</key><string>1</string>
 </dict></plist>
 EOF
-xcrun clang++ -O2 -std=c++23 -fobjc-arc -fvisibility=hidden \
-    -mmacosx-version-min=12.0 -arch arm64 -arch x86_64 \
-    -bundle -framework AppKit -framework CoreGraphics -framework AVFoundation \
-    "$script_dir/WallwallDesktop.mm" "$script_dir/WallwallSettings.mm" \
-    "$script_dir/WallwallPointer.mm" "$script_dir/WallwallFallback.mm" \
-    -o "$binary_dir/WallwallDesktop"
+stage=$(mktemp -d "${TMPDIR:-/tmp}/wallwall-native.XXXXXX")
+trap 'rm -rf "$stage"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
+swift_bin=$(xcrun --find swiftc)
+swift_lib=$(dirname "$swift_bin")/../lib/swift/macosx
+for arch in arm64 x86_64; do
+    (cd "$stage"; xcrun swiftc -O -whole-module-optimization -parse-as-library -emit-object -module-name WallwallDesktop \
+        -emit-objc-header-path "$stage/WallwallDesktop-Swift.h" \
+        -target "$arch-apple-macosx12.0" -module-cache-path "$stage/cache" \
+        "$script_dir/WallwallSettings.swift" "$script_dir/WallwallDisplaySelection.swift" "$script_dir/WallwallDragState.swift" "$script_dir/WallwallRenderPolicy.swift" \
+        "$script_dir/WallwallPointer.swift" "$script_dir/WallwallFallback.swift" "$script_dir/WallwallDesktopHost.swift" -o "$stage/settings-$arch.o")
+    xcrun clang -O2 -fobjc-arc -fvisibility=hidden \
+        -mmacosx-version-min=12.0 -arch "$arch" \
+        -bundle -framework AppKit -framework CoreGraphics -framework AVFoundation \
+        -I "$stage" -L "$swift_lib" -Wl,-rpath,/usr/lib/swift \
+        "$script_dir/WallwallBridge.m" "$stage/settings-$arch.o" \
+        -o "$stage/plugin-$arch"
+done
+xcrun lipo -create "$stage/plugin-arm64" "$stage/plugin-x86_64" -output "$stage/WallwallDesktop"
+mv "$stage/WallwallDesktop" "$binary_dir/WallwallDesktop"
 echo "$output_bundle"

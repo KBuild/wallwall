@@ -21,6 +21,19 @@ fi
 
 "$script_dir/desktop-plugin/build.sh" "$project_dir/Assets/Plugins/macOS"
 mkdir -p "$(dirname "$app_path")" "$(dirname "$log_path")"
+stage=$(mktemp -d "$(dirname "$app_path")/.wallwall-build.XXXXXX")
+staged_app="$stage/$(basename "$app_path")"
+cleanup() {
+    status=$?
+    if [ -d "$stage/displaced.app" ] && [ ! -e "$app_path" ]; then
+        mv "$stage/displaced.app" "$app_path" || return
+    fi
+    rm -rf "$stage"
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
 "$editor" -quit -batchmode -nographics \
     -projectPath "$project_dir" \
     -logFile "${log_path%.log}-import.log"
@@ -39,12 +52,15 @@ PY
 "$editor" -quit -batchmode -nographics \
     -projectPath "$project_dir" \
     -buildTarget osxuniversal \
-    -buildOSXUniversalPlayer "$app_path" \
+    -buildOSXUniversalPlayer "$staged_app" \
     -logFile "$log_path"
 
-if [ ! -x "$app_path/Contents/MacOS/WALLWALL" ]; then
+if [ ! -x "$staged_app/Contents/MacOS/WALLWALL" ]; then
     echo "Unity exited without a WALLWALL executable. Review $log_path." >&2
     exit 1
 fi
+codesign --verify --deep --strict "$staged_app"
+if [ -e "$app_path" ]; then mv "$app_path" "$stage/displaced.app"; fi
+mv "$staged_app" "$app_path"
 echo "Built: $app_path"
 echo "Build log: $log_path"
